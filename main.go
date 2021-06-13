@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"unicode/utf16"
 
@@ -13,13 +14,11 @@ func parseDrives() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("len of n:%d\n", n)
 	buf := make([]uint16, n)
 	_, err = windows.GetLogicalDriveStrings(n, &buf[0])
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("buf: %q --len of buf %d\n", buf, len(buf))
 	s := string(utf16.Decode(buf))
 
 	return strings.Split(strings.TrimRight(s, "\x00"), "\x00"), nil
@@ -33,12 +32,12 @@ func getDrives(drives []string) ([]string, []string) {
 		encoded = utf16.Encode([]rune(d))
 		fmt.Printf("a: %q\n", encoded)
 		encoded = append(encoded, 0)
-		fmt.Println("returned", windows.GetDriveType(&encoded[0]))
-		if windows.DRIVE_REMOVABLE == windows.GetDriveType(&encoded[0]) {
+
+		switch driveType := windows.GetDriveType(&encoded[0]); driveType {
+		case windows.DRIVE_REMOVABLE:
 			fmt.Printf("drive %s is removable\n", d)
 			removables = append(removables, d)
-		}
-		if windows.DRIVE_FIXED == windows.GetDriveType(&encoded[0]) {
+		case windows.DRIVE_FIXED:
 			fmt.Printf("drive %s is fixed\n", d)
 			fixeds = append(fixeds, d)
 		}
@@ -50,7 +49,7 @@ func getDrives(drives []string) ([]string, []string) {
 func main() {
 	drives, err := parseDrives()
 	if err != nil {
-		panic(err)
+		log.Fatalf("error while parsing drives. err:%v\n", err)
 	}
 
 	removables, fixeds := getDrives(drives)
