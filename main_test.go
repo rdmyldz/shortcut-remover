@@ -26,3 +26,22 @@ func Test_scanRemovables(t *testing.T) {
 func Test_getDirs(t *testing.T) {
 	_ = getDirs()
 }
+
+func Test_fixAttrs(t *testing.T) {
+	type args struct {
+		fPath string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		// TODO: Add test cases.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixAttrs(tt.args.fPath)
+		})
+	}
+	// scanRemovables(`C:\Users\rdm\Desktop\repos\github.com\rdmyldz\shortcut-virus\temp`)
+	scanRemovables(`d:\`)
+}

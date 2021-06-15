@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -50,17 +51,20 @@ func getDrives(drives []string) ([]string, []string) {
 }
 
 func scanRemovables(walkdir string) {
-	// walkdir := `e:\`
-	// walkdir := `.`
-
 	err := filepath.Walk(walkdir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
+			var e *fs.PathError
+			if errors.As(err, &e) {
+				if strings.HasSuffix(e.Path, `:\System Volume Information`) {
+					return nil
+				}
+			}
 			return err
 		}
 
 		fmt.Printf("filepath: %s\n", path)
 
-		if filepath.Ext(path) == ".js" {
+		if !info.IsDir() && isVirus(path) {
 			fmt.Println("**************************")
 			fmt.Printf("FOUND VIRUS: %s\n", path)
 			fmt.Println("**************************")
@@ -68,14 +72,47 @@ func scanRemovables(walkdir string) {
 			if err != nil {
 				return err
 			}
+			fmt.Println("**************************")
+			fmt.Printf("DELETED %s\n", path)
+			fmt.Println("**************************")
+			return nil // not necessery to fix attrs because we deleted it
+		}
+		err = fixAttrs(path)
+		if err != nil {
+			fmt.Printf("after fix attrs err: %v\n", err)
+			return err
 		}
 
 		return nil
 	})
 	if err != nil {
-		log.Printf("error while walking: err:%+v\n ", err)
+		log.Printf("error while walking: err:%+#v ---- %T\n ", err, err)
 	}
 
+}
+
+func fixAttrs(fPath string) error {
+	ePath := utf16.Encode([]rune(fPath))
+	ePath = append(ePath, 0)
+	fa, err := windows.GetFileAttributes(&ePath[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ePath: %v\n", fa)
+	if fa == windows.FILE_ATTRIBUTE_DIRECTORY {
+		// skipping this path for bootable removables(0x57 - syscall.Errno)
+		return nil
+	}
+
+	attrs := windows.FILE_ATTRIBUTE_READONLY | windows.FILE_ATTRIBUTE_HIDDEN | windows.FILE_ATTRIBUTE_SYSTEM
+
+	fa = fa &^ uint32(attrs)
+	err = windows.SetFileAttributes(&ePath[0], fa)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func getDirs() []string {
