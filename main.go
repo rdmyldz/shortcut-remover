@@ -8,9 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
+)
+
+var (
+	InfoLogger  *log.Logger
+	ErrorLogger *log.Logger
 )
 
 func parseDrives() ([]string, error) {
@@ -28,30 +34,29 @@ func parseDrives() ([]string, error) {
 	return strings.Split(strings.TrimRight(s, "\x00"), "\x00"), nil
 }
 
-func getDrives(drives []string) ([]string, []string) {
-	var encoded []uint16
+func getDrives(drives []string) ([]string, []string, error) {
 	var removables []string
 	var fixeds []string
 	for _, d := range drives {
-		encoded = utf16.Encode([]rune(d))
-		fmt.Printf("a: %q\n", encoded)
-		encoded = append(encoded, 0)
-
-		switch driveType := windows.GetDriveType(&encoded[0]); driveType {
+		encoded, err := windows.UTF16PtrFromString(d)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch driveType := windows.GetDriveType(encoded); driveType {
 		case windows.DRIVE_REMOVABLE:
-			fmt.Printf("drive %s is removable\n", d)
 			removables = append(removables, d)
 		case windows.DRIVE_FIXED:
-			fmt.Printf("drive %s is fixed\n", d)
 			fixeds = append(fixeds, d)
 		}
 	}
 
-	return removables, fixeds
+	return removables, fixeds, nil
 }
 
-func scanRemovables(walkdir string) {
+func scanRemovables(walkdir string) ([]string, error) {
+	var viruses []string
 	err := filepath.Walk(walkdir, func(path string, info fs.FileInfo, err error) error {
+
 		if err != nil {
 			var e *fs.PathError
 			if errors.As(err, &e) {
@@ -62,52 +67,42 @@ func scanRemovables(walkdir string) {
 			return err
 		}
 
-		fmt.Printf("filepath: %s\n", path)
-
+		if walkdir == path {
+			return nil
+		}
 		if !info.IsDir() && isVirus(path) {
-			fmt.Println("**************************")
-			fmt.Printf("FOUND VIRUS: %s\n", path)
-			fmt.Println("**************************")
-			err = os.Remove(path)
-			if err != nil {
-				return err
-			}
-			fmt.Println("**************************")
-			fmt.Printf("DELETED %s\n", path)
-			fmt.Println("**************************")
-			return nil // not necessery to fix attrs because we deleted it
+			viruses = append(viruses, path)
+			return nil // not necessery to fix attrs because we'll delete it
 		}
 		err = fixAttrs(path)
 		if err != nil {
-			fmt.Printf("after fix attrs err: %v\n", err)
 			return err
 		}
 
 		return nil
 	})
 	if err != nil {
-		log.Printf("error while walking: err:%+#v ---- %T\n ", err, err)
+		return nil, fmt.Errorf("error while walking: err:%v", err)
 	}
+	return viruses, nil
 
 }
 
 func fixAttrs(fPath string) error {
-	ePath := utf16.Encode([]rune(fPath))
-	ePath = append(ePath, 0)
-	fa, err := windows.GetFileAttributes(&ePath[0])
+	ePath, err := windows.UTF16PtrFromString(fPath)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("ePath: %v\n", fa)
-	if fa == windows.FILE_ATTRIBUTE_DIRECTORY {
-		// skipping this path for bootable removables(0x57 - syscall.Errno)
-		return nil
+
+	fa, err := windows.GetFileAttributes(ePath)
+	if err != nil {
+		return err
 	}
 
 	attrs := windows.FILE_ATTRIBUTE_READONLY | windows.FILE_ATTRIBUTE_HIDDEN | windows.FILE_ATTRIBUTE_SYSTEM
 
 	fa = fa &^ uint32(attrs)
-	err = windows.SetFileAttributes(&ePath[0], fa)
+	err = windows.SetFileAttributes(ePath, fa)
 	if err != nil {
 		return err
 	}
@@ -115,11 +110,11 @@ func fixAttrs(fPath string) error {
 	return nil
 }
 
-func getDirs() []string {
+func getDirs() ([]string, error) {
 	var dirs []string
 	h, err := os.UserHomeDir()
 	if err != nil {
-		log.Fatalln("err while getting home")
+		return nil, fmt.Errorf("err while getting home")
 	}
 	roaming := "AppData/Roaming"
 	start := "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
@@ -127,15 +122,15 @@ func getDirs() []string {
 	s := filepath.Join(h, start)
 	dirs = append(dirs, r, s)
 
-	return dirs
+	return dirs, err
 }
 
-func scanDirs(dirs []string) {
+func scanDirs(dirs []string) ([]string, error) {
+	var viruses []string
 	for _, dir := range dirs {
-		fmt.Printf("scanning the dir %s\n", dir)
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			log.Fatalf("error while reading the dir %s, err:%v\n", dir, err)
+			return nil, fmt.Errorf("error while reading the dir %s, err:%v", dir, err)
 		}
 
 		for _, entry := range entries {
@@ -149,34 +144,98 @@ func scanDirs(dirs []string) {
 			}
 
 			p := filepath.Join(dir, n)
-			fmt.Printf("virus FOUND!! -- %s\n", p)
-			err := os.Remove(p)
-			if err != nil {
-				log.Fatalf("error while removing. err:%v\n", err)
-			}
-
+			viruses = append(viruses, p)
 		}
 	}
+	return viruses, nil
 }
 
 func isVirus(name string) bool {
 	return strings.HasSuffix(name, ".js")
 }
 
+func removeViruses(viruses []string) []error {
+	var errs []error
+
+	for i, path := range viruses {
+		err := os.Remove(path)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("err-%d: while removing %s, err: %v", i, path, err))
+		}
+	}
+	return errs
+}
+
+func getTmpFile() (*os.File, error) {
+	fTime := time.Now().Format("20060102-150405")
+
+	tmpDir, err := os.MkdirTemp("", "shortcut-"+fTime+"_*")
+	if err != nil {
+		return nil, fmt.Errorf("error creating temp directory: %v", err)
+	}
+
+	f, err := os.CreateTemp(tmpDir, fTime+"_*.txt")
+	if err != nil {
+		return nil, fmt.Errorf("error while creating file: %v", err)
+	}
+	return f, nil
+}
+
 func main() {
+	tmpFile, err := getTmpFile()
+	if err != nil {
+		ErrorLogger.Fatalf("inside getTmpFile(): err: %v\n", err)
+	}
+	defer tmpFile.Close()
+
+	InfoLogger = log.New(tmpFile, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	ErrorLogger = log.New(tmpFile, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
 	drives, err := parseDrives()
 	if err != nil {
-		log.Fatalf("error while parsing drives. err:%v\n", err)
+		ErrorLogger.Fatalf("inside parsingDrives(): err:%v\n", err)
 	}
 
-	removables, fixeds := getDrives(drives)
-	fmt.Printf("removables: %+v --- fixeds: %+v\n", removables, fixeds)
+	removables, fixeds, err := getDrives(drives)
+	if err != nil {
+		ErrorLogger.Fatalf("inside getDrives(): err: %v\n", err)
+	}
+	InfoLogger.Printf("removables: %+v --- fixeds: %+v\n", removables, fixeds)
+	var found []string
 	for _, removable := range removables {
-		scanRemovables(removable)
+		v, err := scanRemovables(removable)
+		if err != nil {
+			ErrorLogger.Printf("inside scanRemovables(): removable: %s,err: %v\n", removable, err)
+		}
+		found = append(found, v...)
 	}
 
-	dirs := getDirs()
-	fmt.Printf("dirs: %+v\n", dirs)
-	scanDirs(dirs)
+	dirs, err := getDirs()
+	if err != nil {
+		ErrorLogger.Fatalln("inside getDirs(): err: ", err)
+	}
+
+	v, err := scanDirs(dirs)
+	if err != nil {
+		ErrorLogger.Fatalln("inside scanDirs(): err: ", err)
+	}
+
+	found = append(found, v...)
+	InfoLogger.Printf("viruses found: %v\n", found)
+	if len(found) > 0 {
+		fmt.Printf("%d viruses found: %v\n", len(found), found)
+		errs := removeViruses(found)
+		if len(errs) > 0 {
+			ErrorLogger.Printf("returned from removeViruses(): %v\n", errs)
+			for _, err := range errs {
+				log.Println(err)
+			}
+
+		} else {
+			fmt.Println("virused got removed...")
+		}
+	} else {
+		fmt.Println("")
+		fmt.Println("not found anything")
+	}
 
 }
