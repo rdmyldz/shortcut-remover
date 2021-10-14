@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -82,7 +83,7 @@ func scanRemovables(walkdir string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("error while walking: err:%v", err)
+		return nil, fmt.Errorf("error while walking: %w", err)
 	}
 	return viruses, nil
 
@@ -114,7 +115,7 @@ func getDirs() ([]string, error) {
 	var dirs []string
 	h, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("err while getting home")
+		return nil, fmt.Errorf("err while getting homeDir: %w", err)
 	}
 	roaming := "AppData/Roaming"
 	start := "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"
@@ -130,7 +131,7 @@ func scanDirs(dirs []string) ([]string, error) {
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return nil, fmt.Errorf("error while reading the dir %s, err:%v", dir, err)
+			return nil, fmt.Errorf("error while reading the dir %s, err:%w", dir, err)
 		}
 
 		for _, entry := range entries {
@@ -171,12 +172,12 @@ func getTmpFile() (*os.File, error) {
 
 	tmpDir, err := os.MkdirTemp("", "shortcut-"+fTime+"_*")
 	if err != nil {
-		return nil, fmt.Errorf("error creating temp directory: %v", err)
+		return nil, fmt.Errorf("error while creating temp directory: %w", err)
 	}
 
 	f, err := os.CreateTemp(tmpDir, fTime+"_*.txt")
 	if err != nil {
-		return nil, fmt.Errorf("error while creating file: %v", err)
+		return nil, fmt.Errorf("error while creating file: %w", err)
 	}
 	return f, nil
 }
@@ -184,20 +185,23 @@ func getTmpFile() (*os.File, error) {
 func main() {
 	tmpFile, err := getTmpFile()
 	if err != nil {
-		ErrorLogger.Fatalf("inside getTmpFile(): err: %v\n", err)
+		log.Fatalf("inside getTmpFile(): %v\n", err)
 	}
 	defer tmpFile.Close()
 
-	InfoLogger = log.New(tmpFile, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	mw := io.MultiWriter(os.Stdout, tmpFile)
+
+	InfoLogger = log.New(mw, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	ErrorLogger = log.New(tmpFile, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+
 	drives, err := parseDrives()
 	if err != nil {
-		ErrorLogger.Fatalf("inside parsingDrives(): err:%v\n", err)
+		ErrorLogger.Fatalf("inside parseDrives(): %v\n", err)
 	}
 
 	removables, fixeds, err := getDrives(drives)
 	if err != nil {
-		ErrorLogger.Fatalf("inside getDrives(): err: %v\n", err)
+		ErrorLogger.Fatalf("inside getDrives(): %v\n", err)
 	}
 	InfoLogger.Printf("removables: %+v --- fixeds: %+v\n", removables, fixeds)
 	var found []string
@@ -211,18 +215,17 @@ func main() {
 
 	dirs, err := getDirs()
 	if err != nil {
-		ErrorLogger.Fatalln("inside getDirs(): err: ", err)
+		ErrorLogger.Fatalf("inside getDirs(): %v\n", err)
 	}
 
 	v, err := scanDirs(dirs)
 	if err != nil {
-		ErrorLogger.Fatalln("inside scanDirs(): err: ", err)
+		ErrorLogger.Fatalf("inside scanDirs(): %v\n", err)
 	}
 
 	found = append(found, v...)
-	InfoLogger.Printf("viruses found: %v\n", found)
 	if len(found) > 0 {
-		fmt.Printf("%d viruses found: %v\n", len(found), found)
+		InfoLogger.Printf("%d viruses found: %v\n", len(found), found)
 		errs := removeViruses(found)
 		if len(errs) > 0 {
 			ErrorLogger.Printf("returned from removeViruses(): %v\n", errs)
@@ -231,11 +234,10 @@ func main() {
 			}
 
 		} else {
-			fmt.Println("virused got removed...")
+			InfoLogger.Println("viruses got removed...")
 		}
 	} else {
-		fmt.Println("")
-		fmt.Println("not found anything")
+		InfoLogger.Println("not found anything")
 	}
 
 }
