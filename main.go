@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,16 @@ var (
 	InfoLogger  *log.Logger
 	ErrorLogger *log.Logger
 )
+
+const warning = `
+***********************************************************************************************
+*     if you have javascript files(end with '.js' ) in your removables(e.g. USB flash drives) *
+* all will be deleted!!!                                                                      *
+*                                                                                             *
+*                                                                                             *
+*				written by @rdmyldz                                                           *
+***********************************************************************************************
+`
 
 func parseDrives() ([]string, error) {
 	n, err := windows.GetLogicalDriveStrings(0, nil)
@@ -182,6 +193,24 @@ func getTmpFile() (*os.File, error) {
 	return f, nil
 }
 
+func warnUser(logger *log.Logger) {
+	logger.Println(warning)
+
+	r := bufio.NewReader(os.Stdin)
+	logger.Printf("want to continue? [y[es]/n[o]]:")
+	input, err := r.ReadString('\n')
+	if err != nil {
+		logger.Fatalf("error while reading input: %v\n", err)
+	}
+	input = strings.ToLower(strings.TrimSpace(input))
+	if input == "y" || input == "yes" {
+		logger.Println("scanning is starting...")
+		return
+	}
+	logger.Printf("You typed '%s' if you wanna scan your device, type 'y' or 'yes'", input)
+	logger.Fatalln("exiting...")
+}
+
 func main() {
 	tmpFile, err := getTmpFile()
 	if err != nil {
@@ -193,6 +222,8 @@ func main() {
 
 	InfoLogger = log.New(mw, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	ErrorLogger = log.New(tmpFile, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+
+	warnUser(InfoLogger)
 
 	drives, err := parseDrives()
 	if err != nil {
@@ -240,4 +271,6 @@ func main() {
 		InfoLogger.Println("not found anything")
 	}
 
+	InfoLogger.Printf("press 'enter' to exit...")
+	fmt.Scanln()
 }
