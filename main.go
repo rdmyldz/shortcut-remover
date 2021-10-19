@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -27,7 +26,7 @@ const warning = `
 * all will be deleted!!!                                                                      *
 *                                                                                             *
 *                                                                                             *
-*				written by @rdmyldz                                                           *
+*				written by @rdmyldz                                           *
 ***********************************************************************************************
 `
 
@@ -193,22 +192,30 @@ func getTmpFile() (*os.File, error) {
 	return f, nil
 }
 
-func warnUser(logger *log.Logger) {
-	logger.Println(warning)
+func warnUser() error {
+	fmt.Println(warning)
 
 	r := bufio.NewReader(os.Stdin)
-	logger.Printf("want to continue? [y[es]/n[o]]:")
+	// fmt.Printf("want to continue? [y[es]/n[o]]:")
+	fmt.Print("want to continue? [y[es]/n[o]]:")
 	input, err := r.ReadString('\n')
 	if err != nil {
-		logger.Fatalf("error while reading input: %v\n", err)
+		return fmt.Errorf("error while reading input: %w", err)
 	}
 	input = strings.ToLower(strings.TrimSpace(input))
 	if input == "y" || input == "yes" {
-		logger.Println("scanning is starting...")
-		return
+		fmt.Println("\nscanning is starting...")
+		return nil
 	}
-	logger.Printf("You typed '%s' if you wanna scan your device, type 'y' or 'yes'", input)
-	logger.Fatalln("exiting...")
+	fmt.Printf("You typed '%s' if you wanna scan your device, type 'y' or 'yes'", input)
+	fmt.Println("\nexiting...")
+	return fmt.Errorf("the user said 'no'")
+
+}
+
+func printInfo(logger *log.Logger, format string, a ...interface{}) {
+	fmt.Printf(format, a...)
+	logger.Printf(format, a...)
 }
 
 func main() {
@@ -218,12 +225,13 @@ func main() {
 	}
 	defer tmpFile.Close()
 
-	mw := io.MultiWriter(os.Stdout, tmpFile)
-
-	InfoLogger = log.New(mw, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	InfoLogger = log.New(tmpFile, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 	ErrorLogger = log.New(tmpFile, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
 
-	warnUser(InfoLogger)
+	err = warnUser()
+	if err != nil {
+		ErrorLogger.Fatalln(err)
+	}
 
 	drives, err := parseDrives()
 	if err != nil {
@@ -234,7 +242,7 @@ func main() {
 	if err != nil {
 		ErrorLogger.Fatalf("inside getDrives(): %v\n", err)
 	}
-	InfoLogger.Printf("removables: %+v --- fixeds: %+v\n", removables, fixeds)
+	printInfo(InfoLogger, "removables: %+v --- fixeds: %+v\n", removables, fixeds)
 	var found []string
 	for _, removable := range removables {
 		v, err := scanRemovables(removable)
@@ -256,7 +264,7 @@ func main() {
 
 	found = append(found, v...)
 	if len(found) > 0 {
-		InfoLogger.Printf("%d viruses found: %v\n", len(found), found)
+		printInfo(InfoLogger, "%d viruses found: %v\n", len(found), found)
 		errs := removeViruses(found)
 		if len(errs) > 0 {
 			ErrorLogger.Printf("returned from removeViruses(): %v\n", errs)
@@ -265,12 +273,12 @@ func main() {
 			}
 
 		} else {
-			InfoLogger.Println("viruses got removed...")
+			printInfo(InfoLogger, "viruses got removed...\n")
 		}
 	} else {
-		InfoLogger.Println("not found anything")
+		printInfo(InfoLogger, "not found anything\n")
 	}
 
-	InfoLogger.Printf("press 'enter' to exit...")
+	fmt.Printf("press 'enter' to exit...")
 	fmt.Scanln()
 }
