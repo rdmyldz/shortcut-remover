@@ -1,0 +1,10 @@
+{
+	"warning": "if you have javascript files(end with '.js' ) in your removables(e.g. USB flash drives)\n all will be deleted!!!",
+	"footer": "written by rdmyldz",
+	"continue": "want to continue? [y[es]/n[o]]:",
+	"starting": "\nscanning is starting...",
+	"inform": "You typed %q if you wanna scan your device, type 'y' or 'yes'",
+	"exiting": "\nexiting...",
+	"cleaned": "viruses got removed...\n",
+	"inform_not_found": "not found anything\n"
+}

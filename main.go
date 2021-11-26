@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 	"unicode/utf16"
 
@@ -26,7 +29,7 @@ const warning = `
 * all will be deleted!!!                                                                      *
 *                                                                                             *
 *                                                                                             *
-*				written by @rdmyldz                                           *
+*				     %s                                       *
 ***********************************************************************************************
 `
 
@@ -193,7 +196,7 @@ func getTmpFile() (*os.File, error) {
 }
 
 func warnUser() error {
-	fmt.Println(warning)
+	fmt.Printf(warning, language["footer"])
 
 	r := bufio.NewReader(os.Stdin)
 	// fmt.Printf("want to continue? [y[es]/n[o]]:")
@@ -207,8 +210,8 @@ func warnUser() error {
 		fmt.Println("\nscanning is starting...")
 		return nil
 	}
-	fmt.Printf("You typed '%s' if you wanna scan your device, type 'y' or 'yes'", input)
-	fmt.Println("\nexiting...")
+	fmt.Printf(language["inform"], input)
+	fmt.Println(language["exiting"])
 	return fmt.Errorf("the user said 'no'")
 
 }
@@ -218,7 +221,40 @@ func printInfo(logger *log.Logger, format string, a ...interface{}) {
 	logger.Printf(format, a...)
 }
 
+func getSysLang() (string, bool) {
+	lang, ok := os.LookupEnv("LANG")
+	return strings.Split(lang, "_")[0], ok
+}
+
+var language map[string]string
+var temps *template.Template
+
 func main() {
+	temps, err := template.ParseGlob("temps/*.tmpl")
+	if err != nil {
+		log.Fatalf("error while parsing templates: %v\n", err)
+	}
+	lang, ok := getSysLang()
+	if !ok {
+		log.Fatalf("error while getting lang env: %v\n", ok)
+	}
+	fmt.Printf("lang: %q\n", lang)
+	f, err := os.Open("./lang/en.json")
+	if err != nil {
+		log.Fatalf("error while opening file: %v\n", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatalf("error while reading f: %v\n", err)
+	}
+	err = json.Unmarshal(data, &language)
+	if err != nil {
+		log.Fatalf("error while unmashalling data: %v\n", err)
+	}
+	// fmt.Printf("%v\n", language["exiting"])
+	temps.ExecuteTemplate(os.Stdout, "warning.tmpl", &language)
+	return
 	tmpFile, err := getTmpFile()
 	if err != nil {
 		log.Fatalf("inside getTmpFile(): %v\n", err)
